@@ -11,6 +11,11 @@ Saves:
 * Processing when down-sampling images via the CMS.
 * Costly space in production.
 
+Usage:
+```bash
+bash optim.sh "/path/to/huge/folder"
+```
+
 Why?
 
 The intention here is to be able to optimize web folders nightly, using rsync
