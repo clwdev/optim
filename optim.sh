@@ -403,6 +403,7 @@ _start_progress_indicator(){
 }
 
 # Compare two variables, find lines in $2 that are not in $1
+# Excluding path specificity on the file name (which is the hard part)
 _line_diff(){
   local a="$1"
   local b="$2"
@@ -412,21 +413,23 @@ _line_diff(){
   # Loop through the diff lines, to find the long-version of these lines
   # That will result in a list of absolute paths to files that need to be optimized
   lines=$( comm -13 <(echo "$flat_a") <(echo "$flat_b") )
-  while read line ; do
-    # Don't diff empty lines
-    if [ ! -z "$line" ] ; then
-      # search the original $b list, to get the full path
-      search=$( grep "$line" <<< "$b" )
-      if [ ! -z "$search" ] ; then
-        # Do not preceed diff with empty line
-        if [ -z "$result" ] ; then
-          result="$search"
-        else
-          result="$result"$'\n'"$search"
-        fi
+  tmpdir=$(mktemp -dt "$0")
+  tmpfilea="$tmpdir/line_diffa_a.tmp"
+  tmpfileb="$tmpdir/line_diff_b.tmp"
+  echo "$b" > "$tmpfilea"
+
+  # Batch out the searches to parallel processes in batches of 8
+  while chunk=$(_batch 8) ; do
+    # For each line in the chunk
+    while read line ; do
+      if [ ! -z "$line" ] ; then
+        LC_ALL=C grep -F "$line" "$tmpfilea" >> "$tmpfileb" &
       fi
-    fi
+    done <<< "$chunk"
+    wait
   done <<< "$lines"
+  wait
+  result=$(<"$tmpfileb")
 }
 
 # Compare old and new manifests, return new lines only
