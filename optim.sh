@@ -798,7 +798,7 @@ param_silent=false
 param_dependency_check=true
 
 # Define the params we will allow
-allowed_params="h|?|help p|path f|file i|image image-lossy image-lossy-quality image-max-size image-max-width image-max-height image-metadata v|video video-quality video-max-width video-max-height p|pdf m|manifest s|silent d|dependency-check"
+allowed_params="h|?|help p|path f|file i|image image-lossy image-lossy-quality image-max-size image-max-width image-max-height image-metadata v|video video-quality video-max-width video-max-height p|doc m|manifest s|silent d|dependency-check"
 
 # Get the params from arguments provided
 _get_params $*
