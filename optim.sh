@@ -413,8 +413,8 @@ _line_diff(){
   # Loop through the diff lines, to find the long-version of these lines
   # That will result in a list of absolute paths to files that need to be optimized
   lines=$( comm -13 <(echo "$flat_a") <(echo "$flat_b") )
-  tmpdir=$(mktemp -dt "$0")
-  tmpfilea="$tmpdir/line_diffa_a.tmp"
+  tmpdir=$( mktemp -dt "optim" )
+  tmpfilea="$tmpdir/line_diff_a.tmp"
   tmpfileb="$tmpdir/line_diff_b.tmp"
   echo "$b" > "$tmpfilea"
 
@@ -423,7 +423,7 @@ _line_diff(){
     # For each line in the chunk
     while read line ; do
       if [ ! -z "$line" ] ; then
-        LC_ALL=C grep -F "$line" "$tmpfilea" >> "$tmpfileb" &
+        LC_ALL=C grep -F -- "$line" "$tmpfilea" >> "$tmpfileb" &
       fi
     done <<< "$chunk"
     wait
@@ -505,9 +505,11 @@ _optimize_image_batch(){
       while IFS='|' read -ra var ; do
         # Escape spaces
         clean_name="${var[0]}"
-        # clean_name="${var[0]// /\\ }"
-        # echo "Optimizing: $clean_name"
-        file_list="$file_list \"$clean_name\""
+        if [ -e "$clean_name" ] ; then
+          # clean_name="${var[0]// /\\ }"
+          # echo "Optimizing: $clean_name"
+          file_list="$file_list \"$clean_name\""
+        fi
         # file_list="$file_list \"${var[0]//\"/\\\"}\""
       done <<< "$line"
       # We now have a list of $file_batch_count files to optimize
@@ -599,7 +601,9 @@ _estimate_work(){
 _optimize_video(){
   source="$1"
   dest="$2"
-  HandBrakeCLI --pfr 30 --optimize --encoder x264 --quality 20 --two-pass --turbo --input "$source" --output "$dest" >/dev/null 2>&1
+  if [ -e "$source" ] ; then
+    HandBrakeCLI --pfr 30 --optimize --encoder x264 --quality 20 --two-pass --turbo --input "$source" --output "$dest" >/dev/null 2>&1
+  fi
 }
 
 # Given a manifest of videos, optimize them all and report progress as each is completed
@@ -668,24 +672,25 @@ _optimize_doc(){
 #    -c ".setpdfwrite <</AlwaysEmbed [ ]>> setdistillerparams" \
 #    -c ".setpdfwrite <</NeverEmbed [/Courier /Courier-Bold /Courier-Oblique /Courier-BoldOblique /Helvetica /Helvetica-Bold /Helvetica-Oblique /Helvetica-BoldOblique /Times-Roman /Times-Bold /Times-Italic /Times-BoldItalic /Symbol /ZapfDingbats /Arial]>> setdistillerparams"`
 
-  eval "gs                        \
-    -f \"$source\"                \
-    -o \"$dest\"                  \
-    -dPDFSETTINGS=/screen         \
-    -dDownsampleColorImages=true  \
-    -dDownsampleGrayImages=true   \
-    -dDownsampleMonoImages=true   \
-    -dColorImageResolution=72     \
-    -dGrayImageResolution=72      \
-    -dMonoImageResolution=72      \
-    -dConvertCMYKImagesToRGB=true \
-    -dDetectDuplicateImages=true  \
-    -dEmbedAllFonts=false         \
-    -dSubsetFonts=true            \
-    -dCompressFonts=true          \
-    -c \".setpdfwrite <</AlwaysEmbed [ ]>> setdistillerparams\" \
-    -c \".setpdfwrite <</NeverEmbed [/Courier /Courier-Bold /Courier-Oblique /Courier-BoldOblique /Helvetica /Helvetica-Bold /Helvetica-Oblique /Helvetica-BoldOblique /Times-Roman /Times-Bold /Times-Italic /Times-BoldItalic /Symbol /ZapfDingbats /Arial]>> setdistillerparams\"" >/dev/null
-
+  if [ -e "$source" ] ; then
+    eval "gs                        \
+      -f \"$source\"                \
+      -o \"$dest\"                  \
+      -dPDFSETTINGS=/screen         \
+      -dDownsampleColorImages=true  \
+      -dDownsampleGrayImages=true   \
+      -dDownsampleMonoImages=true   \
+      -dColorImageResolution=72     \
+      -dGrayImageResolution=72      \
+      -dMonoImageResolution=72      \
+      -dConvertCMYKImagesToRGB=true \
+      -dDetectDuplicateImages=true  \
+      -dEmbedAllFonts=false         \
+      -dSubsetFonts=true            \
+      -dCompressFonts=true          \
+      -c \".setpdfwrite <</AlwaysEmbed [ ]>> setdistillerparams\" \
+      -c \".setpdfwrite <</NeverEmbed [/Courier /Courier-Bold /Courier-Oblique /Courier-BoldOblique /Helvetica /Helvetica-Bold /Helvetica-Oblique /Helvetica-BoldOblique /Times-Roman /Times-Bold /Times-Italic /Times-BoldItalic /Symbol /ZapfDingbats /Arial]>> setdistillerparams\"" >/dev/null
+  fi
 }
 
 # Given a manifest of docs, optimize them all and report progress as each is completed
