@@ -62,6 +62,7 @@ Options:
   --silent=false            Optionally run silently.
   --dependency-check=true   When starting, first ensure all dependencies are
                             installed. If they aren't, download them.
+  --verbose=false           Optionally output verbose information.
   --help                    Output's this screen.
 "
   exit 1
@@ -402,9 +403,19 @@ _start_progress_indicator(){
   fi
 }
 
+# Simple timer functions
+_timer_start(){
+  starttime=$(date +%s)
+}
+_timer_end(){
+  local endtime=$(date +%s)
+  echo "Duration: $(($endtime - $starttime)) seconds."; echo
+}
+
 # Compare two variables, find lines in $2 that are not in $1
 # Excluding path specificity on the file name (which is the hard part)
 _line_diff(){
+  _timer_start
   local a="$1"
   local b="$2"
   local flat_a=$( echo "$a" | sed -e 's/.*\///' )
@@ -419,7 +430,7 @@ _line_diff(){
   echo "$b" > "$tmpfilea"
 
   # Batch out the searches to parallel processes in batches of 8
-  while chunk=$(_batch 8) ; do
+  while chunk=$(_batch 20) ; do
     # For each line in the chunk
     while read line ; do
       if [ ! -z "$line" ] ; then
@@ -429,6 +440,7 @@ _line_diff(){
     wait
   done <<< "$lines"
   wait
+  _timer_end
   result=$(<"$tmpfileb")
 }
 
@@ -503,12 +515,15 @@ _optimize_image_batch(){
     while read line ; do
       # For each variable in the line
       while IFS='|' read -ra var ; do
-        # Escape spaces
-        clean_name="${var[0]}"
-        if [ -e "$clean_name" ] ; then
-          # clean_name="${var[0]// /\\ }"
-          # echo "Optimizing: $clean_name"
-          file_list="$file_list \"$clean_name\""
+        local original_file="${var[0]}"
+        # Ensure the file still exists before optimizing
+        if [ -e "$original_file" ] ; then
+          if _bool $param_verbose ; then
+            echo "Optimizing: $original_file"
+          fi
+          file_list="$file_list \"$original_file\""
+        else
+          echo "No longer exists: $original_file"
         fi
         # file_list="$file_list \"${var[0]//\"/\\\"}\""
       done <<< "$line"
@@ -523,7 +538,8 @@ _optimize_image_batch(){
 
     # For each line in the chunk
     while read line ; do
-      # For each variable in the line
+
+      # Get the original file name and size for comparison
       while IFS='|' read -ra var ; do
         # Escape spaces so that image_optim can take the file names as they are in bulk
         local original_file="${var[0]}"
@@ -532,33 +548,35 @@ _optimize_image_batch(){
       done <<< "$line"
 
       # Was there any change or optimization?
-      _find_images "$original_file"
-      local new_file="$result"
-      local reduction=0
-      if [[ "$new_file" != "$line" ]] ; then
-        # Yes, the file was optimized, but by how much exactly?
-        while IFS='|' read -ra var ; do
-          # Escape spaces so that image_optim can take the file names as they are in bulk
-          local new_size="${var[1]}"
-        done <<< "$new_file"
-        let reduction=$original_size-$new_size
-        let bytes_optimized=$bytes_optimized+$reduction
+      if [ -e "$original_file" ] ; then
+        _find_images "$original_file"
+        local new_file="$result"
+        local reduction=0
+        if [[ "$new_file" != "$line" ]] ; then
+          # Yes, the file was optimized, but by how much exactly?
+          while IFS='|' read -ra var ; do
+            # Escape spaces so that image_optim can take the file names as they are in bulk
+            local new_size="${var[1]}"
+          done <<< "$new_file"
+          let reduction=$original_size-$new_size
+          let bytes_optimized=$bytes_optimized+$reduction
+        fi
+
+        # Flatten this single manifest entry (remove absolute path)
+        _flaten_manifest "$new_file"
+        local flat_manifest_entry="$result"
+        _append_manifest "image" "$flat_manifest_entry"
+
+        # Add the amount of reduction to the file at the end also, and save to the reduction manifest as a log of what was done
+        if [[ $reduction > 0 ]] ; then
+          _append_manifest "image_reduction" "$flat_manifest_entry|$reduction"
+        fi
+
+        # Increase count of processed files
+        let file_processed_count=$file_processed_count+$file_batch_count
+
+        _start_progress_indicator "image" "Image Processing" "$todo_image_file_count"
       fi
-
-      # Flatten this single manifest entry (remove absolute path)
-      _flaten_manifest "$new_file"
-      local flat_manifest_entry="$result"
-      _append_manifest "image" "$flat_manifest_entry"
-
-      # Add the amount of reduction to the file at the end also, and save to the reduction manifest as a log of what was done
-      if [[ $reduction > 0 ]] ; then
-        _append_manifest "image_reduction" "$flat_manifest_entry|$reduction"
-      fi
-
-      # Increase count of processed files
-      let file_processed_count=$file_processed_count+$file_batch_count
-
-      _start_progress_indicator "image" "Image Processing" "$todo_image_file_count"
     done <<< "$chunk"
   done <<< "$1"
 }
@@ -801,9 +819,10 @@ param_manifest=true
 param_manifest_name=.optim
 param_silent=false
 param_dependency_check=true
+param_verbose=false
 
 # Define the params we will allow
-allowed_params="h|?|help p|path f|file i|image image-lossy image-lossy-quality image-max-size image-max-width image-max-height image-metadata v|video video-quality video-max-width video-max-height p|doc m|manifest s|silent d|dependency-check"
+allowed_params="h|?|help p|path f|file i|image image-lossy image-lossy-quality image-max-size image-max-width image-max-height image-metadata v|video video-quality video-max-width video-max-height p|doc m|manifest s|silent d|dependency-check x|verbose"
 
 # Get the params from arguments provided
 _get_params $*
