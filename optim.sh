@@ -429,8 +429,8 @@ _line_diff(){
   tmpfileb="$tmpdir/line_diff_b.tmp"
   echo "$b" > "$tmpfilea"
 
-  # Batch out the searches to parallel processes in batches of 8
-  while chunk=$(_batch 20) ; do
+  # Batch out the searches to parallel processes in batches of 16
+  while chunk=$(_batch 16) ; do
     # For each line in the chunk
     while read line ; do
       if [ ! -z "$line" ] ; then
@@ -625,7 +625,34 @@ _optimize_video(){
   source="$1"
   dest="$2"
   if [ -e "$source" ] ; then
-    HandBrakeCLI --pfr 30 --optimize --encoder x264 --quality 20 --two-pass --turbo --input "$source" --output "$dest" >/dev/null 2>&1
+
+    tmpdir=$( mktemp -dt "optim-video" )
+    tmpdest="$tmpdir/optimized.mp4"
+    if [ -e "$tmpdest" ] ; then
+      rm -f "$tmpdest"
+    fi
+    if _bool $param_verbose ; then
+      echo "Optimizing: $source"
+      HandBrakeCLI --pfr 30 --optimize --encoder x264 --quality 20 --two-pass --turbo --input "$source" --output "$tmpdest"
+    else
+      HandBrakeCLI --pfr 30 --optimize --encoder x264 --quality 20 --two-pass --turbo --input "$source" --output "$tmpdest" >/dev/null 2>&1
+    fi
+    if [ -e "$tmpdest" ] ; then
+      # Check to ensure the new file is smaller than the old
+      local oldsize=$( stat -qn -f "%z" -- "$source" )
+      local newsize=$( stat -qn -f "%z" -- "$tmpdest" )
+      let sizediff=$oldsize-$newsize
+      if [ "$sizediff" -lt "0" ] ; then
+        if _bool $param_verbose ; then
+          echo "End result ended up larger than original ($sizediff). Skipping: $source"
+        fi
+      else
+        if _bool $param_verbose ; then
+          echo "Optimized by $sizediff: $source"
+        fi
+        mv -f "$tmpdest" "$source"
+      fi
+    fi
   fi
 }
 
@@ -668,7 +695,7 @@ _optimize_videos(){
 
     done <<< "$line"
 
-    _start_progress_indicator "video" "Video Processing" "$todo_doc_file_count"
+    _start_progress_indicator "video" "Video Processing" "$todo_video_file_count"
   done <<< "$lines"
 }
 
