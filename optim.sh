@@ -620,10 +620,8 @@ _estimate_work(){
 }
 
 # Optimize a single video file for web
-# _optimize_video source destination
 _optimize_video(){
   source="$1"
-  dest="$2"
   if [ -e "$source" ] ; then
 
     tmpdir=$( mktemp -dt "optim-video" )
@@ -667,8 +665,7 @@ _optimize_videos(){
       local source="${var[0]}"
       local original_size="${var[1]}"
       # @todo - Support backups... currently overwriting the orginal
-      local dest="$source"
-      _optimize_video "$source" "$dest"
+      _optimize_video "$source"
 
       _find_videos "$dest"
       local new_file="$result"
@@ -700,46 +697,69 @@ _optimize_videos(){
 }
 
 # Optimize a single document file for web
-# _optimize_doc source destination
 _optimize_doc(){
-  local source="$1"
-  local dest="$2"
-#  result=`gs                      \
-#    -f "$source"                  \
-#    -o "$dest"                    \
-#    -dPDFSETTINGS=/screen         \
-#    -dDownsampleColorImages=true  \
-#    -dDownsampleGrayImages=true   \
-#    -dDownsampleMonoImages=true   \
-#    -dColorImageResolution=72     \
-#    -dGrayImageResolution=72      \
-#    -dMonoImageResolution=72      \
-#    -dConvertCMYKImagesToRGB=true \
-#    -dDetectDuplicateImages=true  \
-#    -dEmbedAllFonts=false         \
-#    -dSubsetFonts=true            \
-#    -dCompressFonts=true          \
-#    -c ".setpdfwrite <</AlwaysEmbed [ ]>> setdistillerparams" \
-#    -c ".setpdfwrite <</NeverEmbed [/Courier /Courier-Bold /Courier-Oblique /Courier-BoldOblique /Helvetica /Helvetica-Bold /Helvetica-Oblique /Helvetica-BoldOblique /Times-Roman /Times-Bold /Times-Italic /Times-BoldItalic /Symbol /ZapfDingbats /Arial]>> setdistillerparams"`
-
+  source="$1"
   if [ -e "$source" ] ; then
-    eval "gs                        \
-      -f \"$source\"                \
-      -o \"$dest\"                  \
-      -dPDFSETTINGS=/screen         \
-      -dDownsampleColorImages=true  \
-      -dDownsampleGrayImages=true   \
-      -dDownsampleMonoImages=true   \
-      -dColorImageResolution=72     \
-      -dGrayImageResolution=72      \
-      -dMonoImageResolution=72      \
-      -dConvertCMYKImagesToRGB=true \
-      -dDetectDuplicateImages=true  \
-      -dEmbedAllFonts=false         \
-      -dSubsetFonts=true            \
-      -dCompressFonts=true          \
-      -c \".setpdfwrite <</AlwaysEmbed [ ]>> setdistillerparams\" \
-      -c \".setpdfwrite <</NeverEmbed [/Courier /Courier-Bold /Courier-Oblique /Courier-BoldOblique /Helvetica /Helvetica-Bold /Helvetica-Oblique /Helvetica-BoldOblique /Times-Roman /Times-Bold /Times-Italic /Times-BoldItalic /Symbol /ZapfDingbats /Arial]>> setdistillerparams\"" >/dev/null
+
+    tmpdir=$( mktemp -dt "optim-doc" )
+    tmpdest="$tmpdir/optimized.pdf"
+    if [ -e "$tmpdest" ] ; then
+      rm -f "$tmpdest"
+    fi
+    if _bool $param_verbose ; then
+      echo "Optimizing: $source"
+      eval "gs                        \
+        -f \"$source\"                \
+        -o \"$tmpdest\"               \
+        -dPDFSETTINGS=/screen         \
+        -dDownsampleColorImages=true  \
+        -dDownsampleGrayImages=true   \
+        -dDownsampleMonoImages=true   \
+        -dColorImageResolution=72     \
+        -dGrayImageResolution=72      \
+        -dMonoImageResolution=72      \
+        -dConvertCMYKImagesToRGB=true \
+        -dDetectDuplicateImages=true  \
+        -dEmbedAllFonts=false         \
+        -dSubsetFonts=true            \
+        -dCompressFonts=true          \
+        -c \".setpdfwrite <</AlwaysEmbed [ ]>> setdistillerparams\" \
+        -c \".setpdfwrite <</NeverEmbed [/Courier /Courier-Bold /Courier-Oblique /Courier-BoldOblique /Helvetica /Helvetica-Bold /Helvetica-Oblique /Helvetica-BoldOblique /Times-Roman /Times-Bold /Times-Italic /Times-BoldItalic /Symbol /ZapfDingbats /Arial]>> setdistillerparams\""
+    else
+      eval "gs                        \
+        -f \"$source\"                \
+        -o \"$tmpdest\"               \
+        -dPDFSETTINGS=/screen         \
+        -dDownsampleColorImages=true  \
+        -dDownsampleGrayImages=true   \
+        -dDownsampleMonoImages=true   \
+        -dColorImageResolution=72     \
+        -dGrayImageResolution=72      \
+        -dMonoImageResolution=72      \
+        -dConvertCMYKImagesToRGB=true \
+        -dDetectDuplicateImages=true  \
+        -dEmbedAllFonts=false         \
+        -dSubsetFonts=true            \
+        -dCompressFonts=true          \
+        -c \".setpdfwrite <</AlwaysEmbed [ ]>> setdistillerparams\" \
+        -c \".setpdfwrite <</NeverEmbed [/Courier /Courier-Bold /Courier-Oblique /Courier-BoldOblique /Helvetica /Helvetica-Bold /Helvetica-Oblique /Helvetica-BoldOblique /Times-Roman /Times-Bold /Times-Italic /Times-BoldItalic /Symbol /ZapfDingbats /Arial]>> setdistillerparams\"" >/dev/null
+    fi
+    if [ -e "$tmpdest" ] ; then
+      # Check to ensure the new file is smaller than the old
+      local oldsize=$( stat -qn -f "%z" -- "$source" )
+      local newsize=$( stat -qn -f "%z" -- "$tmpdest" )
+      let sizediff=$oldsize-$newsize
+      if [ "$sizediff" -lt "0" ] ; then
+        if _bool $param_verbose ; then
+          echo "End result ended up larger than original ($sizediff). Skipping: $source"
+        fi
+      else
+        if _bool $param_verbose ; then
+          echo "Optimized by $sizediff: $source"
+        fi
+        mv -f "$tmpdest" "$source"
+      fi
+    fi
   fi
 }
 
@@ -754,8 +774,7 @@ _optimize_docs(){
       local source="${var[0]}"
       local original_size="${var[1]}"
       # @todo - Support backups... currently overwriting the orginal
-      local dest="$source"
-      _optimize_doc "$source" "$dest"
+      _optimize_doc "$source"
 
       _find_docs "$dest"
       local new_file="$result"
