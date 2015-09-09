@@ -493,7 +493,7 @@ _diff_manifest(){
 # _optimize_image source source source source ...
 _optimize_image(){
   cd / >/dev/null 2>&1
-  eval "image_optim --skip-missing-workers --allow-lossy --no-svgo --no-progress -- $@" >/dev/null
+  eval "image_optim --skip-missing-workers --pack --allow-lossy --no-svgo --no-progress -- $@" >/dev/null
   cd - >/dev/null 2>&1
 }
 
@@ -511,6 +511,7 @@ _optimize_image_batch(){
 
     # Form a string of safe file names to send to image-optim
     file_list=""
+    local file_list_count=0
     # For each line in the chunk
     while read line ; do
       # For each variable in the line
@@ -522,6 +523,7 @@ _optimize_image_batch(){
             echo "Optimizing: $original_file"
           fi
           file_list="$file_list \"$original_file\""
+          let file_list_count=$file_list_count+1
         else
           echo "No longer exists: $original_file"
         fi
@@ -531,53 +533,56 @@ _optimize_image_batch(){
     done <<< "$chunk"
 
     # Begin optimization of this batch
-    # echo "Optimizing... $file_list"
-    _optimize_image $file_list
+    if [[ $file_list_count > 0 ]] ; then
+      _optimize_image $file_list
+    fi
 
     # Compare the original file size to the new size to update the manifest
 
     # For each line in the chunk
-    while read line ; do
+    if [[ $file_list_count > 0 ]] ; then
+      while read line ; do
 
-      # Get the original file name and size for comparison
-      while IFS='|' read -ra var ; do
-        # Escape spaces so that image_optim can take the file names as they are in bulk
-        local original_file="${var[0]}"
-        local original_size="${var[1]}"
-        let bytes_processed=$bytes_processed+$original_size;
-      done <<< "$line"
+        # Get the original file name and size for comparison
+        while IFS='|' read -ra var ; do
+          # Escape spaces so that image_optim can take the file names as they are in bulk
+          local original_file="${var[0]}"
+          local original_size="${var[1]}"
+          let bytes_processed=$bytes_processed+$original_size;
+        done <<< "$line"
 
-      # Was there any change or optimization?
-      if [ -e "$original_file" ] ; then
-        _find_images "$original_file"
-        local new_file="$result"
-        local reduction=0
-        if [[ "$new_file" != "$line" ]] ; then
-          # Yes, the file was optimized, but by how much exactly?
-          while IFS='|' read -ra var ; do
-            # Escape spaces so that image_optim can take the file names as they are in bulk
-            local new_size="${var[1]}"
-          done <<< "$new_file"
-          let reduction=$original_size-$new_size
-          let bytes_optimized=$bytes_optimized+$reduction
+        # Was there any change or optimization?
+        if [ -e "$original_file" ] ; then
+          _find_images "$original_file"
+          local new_file="$result"
+          local reduction=0
+          if [[ "$new_file" != "$line" ]] ; then
+            # Yes, the file was optimized, but by how much exactly?
+            while IFS='|' read -ra var ; do
+              # Escape spaces so that image_optim can take the file names as they are in bulk
+              local new_size="${var[1]}"
+            done <<< "$new_file"
+            let reduction=$original_size-$new_size
+            let bytes_optimized=$bytes_optimized+$reduction
+          fi
+
+          # Flatten this single manifest entry (remove absolute path)
+          _flaten_manifest "$new_file"
+          local flat_manifest_entry="$result"
+          _append_manifest "image" "$flat_manifest_entry"
+
+          # Add the amount of reduction to the file at the end also, and save to the reduction manifest as a log of what was done
+          if [[ $reduction > 0 ]] ; then
+            _append_manifest "image_reduction" "$flat_manifest_entry|$reduction"
+          fi
+
+          # Increase count of processed files
+          let file_processed_count=$file_processed_count+$file_batch_count
+
+          _start_progress_indicator "image" "Image Processing" "$todo_image_file_count"
         fi
-
-        # Flatten this single manifest entry (remove absolute path)
-        _flaten_manifest "$new_file"
-        local flat_manifest_entry="$result"
-        _append_manifest "image" "$flat_manifest_entry"
-
-        # Add the amount of reduction to the file at the end also, and save to the reduction manifest as a log of what was done
-        if [[ $reduction > 0 ]] ; then
-          _append_manifest "image_reduction" "$flat_manifest_entry|$reduction"
-        fi
-
-        # Increase count of processed files
-        let file_processed_count=$file_processed_count+$file_batch_count
-
-        _start_progress_indicator "image" "Image Processing" "$todo_image_file_count"
-      fi
-    done <<< "$chunk"
+      done <<< "$chunk"
+    fi
   done <<< "$1"
 }
 
@@ -791,7 +796,7 @@ _batch() {
 ################################################################################
 
 # Global settings
-set -o errexit
+# set -o errexit
 set -o pipefail
 set -o nounset
 # set -o xtrace
