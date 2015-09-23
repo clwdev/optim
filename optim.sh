@@ -626,9 +626,6 @@ _optimize_video(){
 
     tmpdir=$( mktemp -dt "optim-video" )
     tmpdest="$tmpdir/optimized.mp4"
-    if [ -e "$tmpdest" ] ; then
-      rm -f "$tmpdest"
-    fi
     if _bool $param_verbose ; then
       echo "Optimizing: $source"
       HandBrakeCLI --pfr 30 --optimize --encoder x264 --quality 20 --two-pass --turbo --input "$source" --output "$tmpdest"
@@ -667,17 +664,19 @@ _optimize_videos(){
       # @todo - Support backups... currently overwriting the orginal
       _optimize_video "$source"
 
-      _find_videos "$dest"
+      _find_videos "$source"
       local new_file="$result"
       local reduction=0
       if [[ "$new_file" != "$line" ]] ; then
         # Yes, the file was optimized, but by how much exactly?
-        while IFS='|' read -ra var ; do
+        while IFS='|' read -ra vr ; do
           # Escape spaces so that image_optim can take the file names as they are in bulk
-          local new_size="${var[1]}"
+          local new_size="${vr[1]:=0}"
         done <<< "$new_file"
-        let reduction=$original_size-$new_size
-        let bytes_optimized=$bytes_optimized+$reduction
+        if [[ "$new_size" > 0 ]] ; then
+          let reduction=$original_size-$new_size
+          let bytes_optimized=$bytes_optimized+$reduction
+        fi
       fi
 
       # Flatten this single manifest entry (remove absolute path)
@@ -703,14 +702,11 @@ _optimize_doc(){
 
     tmpdir=$( mktemp -dt "optim-doc" )
     tmpdest="$tmpdir/optimized.pdf"
-    if [ -e "$tmpdest" ] ; then
-      rm -f "$tmpdest"
-    fi
     if _bool $param_verbose ; then
       echo "Optimizing: $source"
       eval "gs                        \
-        -f \"$source\"                \
-        -o \"$tmpdest\"               \
+        -sOutputFile=\"$tmpdest\"     \
+        -sDEVICE=pdfwrite             \
         -dPDFSETTINGS=/screen         \
         -dDownsampleColorImages=true  \
         -dDownsampleGrayImages=true   \
@@ -723,12 +719,13 @@ _optimize_doc(){
         -dEmbedAllFonts=false         \
         -dSubsetFonts=true            \
         -dCompressFonts=true          \
-        -c \".setpdfwrite <</AlwaysEmbed [ ]>> setdistillerparams\" \
-        -c \".setpdfwrite <</NeverEmbed [/Courier /Courier-Bold /Courier-Oblique /Courier-BoldOblique /Helvetica /Helvetica-Bold /Helvetica-Oblique /Helvetica-BoldOblique /Times-Roman /Times-Bold /Times-Italic /Times-BoldItalic /Symbol /ZapfDingbats /Arial]>> setdistillerparams\""
+        -f \"$source\"                "
+        # -c '.setpdfwrite <</AlwaysEmbed [ ]>> setdistillerparams' \
+        # -c '.setpdfwrite <</NeverEmbed [/Courier /Courier-Bold /Courier-Oblique /Courier-BoldOblique /Helvetica /Helvetica-Bold /Helvetica-Oblique /Helvetica-BoldOblique /Times-Roman /Times-Bold /Times-Italic /Times-BoldItalic /Symbol /ZapfDingbats /Arial]>> setdistillerparams'"
     else
       eval "gs                        \
-        -f \"$source\"                \
-        -o \"$tmpdest\"               \
+        -sOutputFile=\"$tmpdest\"     \
+        -sDEVICE=pdfwrite             \
         -dPDFSETTINGS=/screen         \
         -dDownsampleColorImages=true  \
         -dDownsampleGrayImages=true   \
@@ -741,8 +738,9 @@ _optimize_doc(){
         -dEmbedAllFonts=false         \
         -dSubsetFonts=true            \
         -dCompressFonts=true          \
-        -c \".setpdfwrite <</AlwaysEmbed [ ]>> setdistillerparams\" \
-        -c \".setpdfwrite <</NeverEmbed [/Courier /Courier-Bold /Courier-Oblique /Courier-BoldOblique /Helvetica /Helvetica-Bold /Helvetica-Oblique /Helvetica-BoldOblique /Times-Roman /Times-Bold /Times-Italic /Times-BoldItalic /Symbol /ZapfDingbats /Arial]>> setdistillerparams\"" >/dev/null
+        -f \"$source\"                " >/dev/null
+        # -c '.setpdfwrite <</AlwaysEmbed [ ]>> setdistillerparams' \
+        # -c '.setpdfwrite <</NeverEmbed [/Courier /Courier-Bold /Courier-Oblique /Courier-BoldOblique /Helvetica /Helvetica-Bold /Helvetica-Oblique /Helvetica-BoldOblique /Times-Roman /Times-Bold /Times-Italic /Times-BoldItalic /Symbol /ZapfDingbats /Arial]>> setdistillerparams'" >/dev/null
     fi
     if [ -e "$tmpdest" ] ; then
       # Check to ensure the new file is smaller than the old
@@ -759,6 +757,8 @@ _optimize_doc(){
         fi
         mv -f "$tmpdest" "$source"
       fi
+    else
+      echo "Optimized file missing: $tmpdest"
     fi
   fi
 }
@@ -776,27 +776,32 @@ _optimize_docs(){
       # @todo - Support backups... currently overwriting the orginal
       _optimize_doc "$source"
 
-      _find_docs "$dest"
-      local new_file="$result"
-      local reduction=0
-      if [[ "$new_file" != "$line" ]] ; then
-        # Yes, the file was optimized, but by how much exactly?
-        while IFS='|' read -ra var ; do
-          # Escape spaces so that image_optim can take the file names as they are in bulk
-          local new_size="${var[1]}"
-        done <<< "$new_file"
-        let reduction=$original_size-$new_size
-        let bytes_optimized=$bytes_optimized+$reduction
-      fi
+      if [ -e "$source" ] ; then
 
-      # Flatten this single manifest entry (remove absolute path)
-      _flaten_manifest "$new_file"
-      local flat_manifest_entry="$result"
-      _append_manifest "doc" "$flat_manifest_entry"
+        _find_docs "$source"
+        local new_file="$result"
+        local reduction=0
 
-      # Add the amount of reduction to the file at the end also, and save to the reduction manifest as a log of what was done
-      if [[ $reduction > 0 ]] ; then
-        _append_manifest "doc_reduction" "$flat_manifest_entry|$reduction"
+        if [[ "$new_file" != "$line" ]] ; then
+          # Yes, the file was optimized, but by how much exactly?
+          while IFS='|' read -ra vr ; do
+            local new_size="${vr[1]:=0}"
+          done <<< "$new_file"
+          if [[ "$new_size" > 0 ]] ; then
+            let reduction=$original_size-$new_size
+            let bytes_optimized=$bytes_optimized+$reduction
+          fi
+        fi
+
+        # Flatten this single manifest entry (remove absolute path)
+        _flaten_manifest "$new_file"
+        local flat_manifest_entry="$result"
+        _append_manifest "doc" "$flat_manifest_entry"
+
+        # Add the amount of reduction to the file at the end also, and save to the reduction manifest as a log of what was done
+        if [[ $reduction > 0 ]] ; then
+          _append_manifest "doc_reduction" "$flat_manifest_entry|$reduction"
+        fi
       fi
 
     done <<< "$line"
@@ -1000,7 +1005,7 @@ _generate_manifest
 # This is needed even if we are not using existing manifests
 _diff_manifest
 
-# Estimate work (new/altered files) @todo - use stats for end-result screen
+# Estimate work for new/altered files - use stats for end-result screen
 # _estimate_work
 
 ################################################################################
