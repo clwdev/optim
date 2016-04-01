@@ -51,8 +51,9 @@ Options:
   --video-quality=20        Specify the minimum video quality (20 is great).
   --video-max-width=1920    Maximum width for optimized videos.
   --video-max-height=1080   Maximum height for optimized videos.
-  --doc=true                Optimize PDFs (or similar files) for web.
+  --doc=false               Optimize PDFs (or similar files) for web.
                             All document compression is lossy.
+                            This may not work with some PDFs!
   --manifest=true           Include a manifest so that this script can be
                             ran repeatedly, skipping files that have already
                             been compressed to prevent degredation. If this
@@ -870,7 +871,7 @@ param_video=true
 param_video_quality=20
 param_video_max_width=1920
 param_video_max_height=1080
-param_doc=true
+param_doc=false
 param_manifest=true
 param_manifest_name=.optim
 param_silent=false
