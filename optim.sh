@@ -952,8 +952,8 @@ if _bool "$param_dependency_check" ; then
     tar zxf pngout-20150319-darwin.tar.gz
     cd pngout-20150319-darwin
     echo "Your password may be required to install pngout."
-    sudo cp pngout /usr/bin/
-    sudo chmod +x /usr/bin/pngout
+    sudo cp pngout /usr/local/bin/
+    sudo chmod +x /usr/local/bin/pngout
     sudo rm -Rf /tmp/pngout-*
   fi
 
