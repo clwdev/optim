@@ -960,7 +960,7 @@ if _bool "$param_dependency_check" ; then
   # Handbrake CLI
   if [ -z "$(which handbrakecli)" ] ; then
     echo "Handbrake CLI is needed. Installing..."
-    brew install caskroom/cask/brew-cask
+    brew tap caskroom/cask
     brew cask install handbrakecli
   fi
 
