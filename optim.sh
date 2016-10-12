@@ -236,6 +236,7 @@ _find_images(){
     -and ! \(                              \
       -path ".*"                           \
       -or -path "*.dropbox.cache*"         \
+      -or -name "*.web.*"                  \
     \)                                     \
     -size +100c                            \
     -exec stat -qn -f '%N|%z|' {}          \;\
@@ -279,6 +280,7 @@ _find_videos(){
     -and ! \(                              \
       -path ".*"                           \
       -or -path "*.dropbox.cache*"         \
+      -or -name "*.web.*"                  \
     \)                                     \
     -size +10k                             \
     -exec stat -qn -f '%N|%z|' {}          \;\
@@ -293,6 +295,7 @@ _find_docs(){
     -and ! \(                              \
       -path ".*"                           \
       -or -path "*.dropbox.cache*"         \
+      -or -name "*.web.*"                  \
     \)                                     \
     -size +10k                             \
     -exec stat -qn -f '%N|%z|' {}          \;\
