@@ -311,6 +311,7 @@ _generate_manifest(){
     new_image_manifest="$result"
     new_image_file_count=$( echo "$new_image_manifest" | wc -l )
     new_image_file_count=${new_image_file_count// /}
+    let new_image_file_count=new_image_file_count-1
     printf " found $new_image_file_count\n"
   fi
   if _bool "$param_video" ; then
@@ -320,6 +321,7 @@ _generate_manifest(){
     new_video_manifest="$result"
     new_video_file_count=$( echo "$new_video_manifest" | wc -l )
     new_video_file_count=${new_video_file_count// /}
+    let new_video_file_count=new_video_file_count-1
     printf " found $new_video_file_count\n"
   fi
   if _bool "$param_doc" ; then
@@ -329,6 +331,7 @@ _generate_manifest(){
     new_doc_manifest="$result"
     new_doc_file_count=$( echo "$new_doc_manifest" | wc -l )
     new_doc_file_count=${new_doc_file_count// /}
+    let new_doc_file_count=new_doc_file_count-1
     printf " found $new_doc_file_count\n"
   fi
   new_total_file_count=$(( $new_image_file_count + $new_video_file_count + $new_doc_file_count ))
@@ -348,6 +351,7 @@ _load_manifest(){
         old_image_manifest=$(<"$param_path/$param_manifest_name/image.man")
         old_image_file_count=$( echo "$old_image_manifest" | wc -l )
         old_image_file_count=${old_image_file_count// /}
+        let old_image_file_count=old_image_file_count-1
       fi
     fi
     if _bool "$param_video" ; then
@@ -355,6 +359,7 @@ _load_manifest(){
         old_video_manifest=$(<"$param_path/$param_manifest_name/video.man")
         old_video_file_count=$( echo "$old_video_manifest" | wc -l )
         old_video_file_count=${old_video_file_count// /}
+        let old_video_file_count=old_video_file_count-1
       fi
     fi
     if _bool "$param_doc" ; then
@@ -362,6 +367,7 @@ _load_manifest(){
         old_doc_manifest=$(<"$param_path/$param_manifest_name/doc.man")
         old_doc_file_count=$( echo "$old_doc_manifest" | wc -l )
         old_doc_file_count=${old_doc_file_count// /}
+        let old_doc_file_count=old_doc_file_count-1
       fi
     fi
     old_total_file_count=$(( $old_image_file_count + $old_video_file_count + $old_doc_file_count ))
@@ -419,30 +425,68 @@ _line_diff(){
   _timer_start
   local a="$1"
   local b="$2"
-  local flat_a=$( echo "$a" | sed -e 's/.*\///' )
-  local flat_b=$( echo "$b" | sed -e 's/.*\///' )
   result=""
-  # Loop through the diff lines, to find the long-version of these lines
-  # That will result in a list of absolute paths to files that need to be optimized
-  lines=$( comm -13 <(echo "$flat_a") <(echo "$flat_b") )
-  tmpdir=$( mktemp -dt "optim" )
-  tmpfilea="$tmpdir/line_diff_a.tmp"
-  tmpfileb="$tmpdir/line_diff_b.tmp"
-  echo "$b" > "$tmpfilea"
-
-  # Batch out the searches to parallel processes in batches of 16
-  while chunk=$(_batch 16) ; do
-    # For each line in the chunk
-    while read line ; do
-      if [ ! -z "$line" ] ; then
-        LC_ALL=C grep -F -- "$line" "$tmpfilea" >> "$tmpfileb" &
+  if [ "$a" != "$b" ] ; then
+    if [ -z "$(which php)" ]
+    then 
+      # Remove file paths for flat versions of both variables.
+      local flat_a=$( echo "$a" | sed -e 's/.*\///' )
+      local flat_b=$( echo "$b" | sed -e 's/.*\///' )
+      # Use comm to get a diff of the flat versions of the variables.
+      lines=$( comm -13 <(echo "$flat_a") <(echo "$flat_b") )
+      if [ ! -z "$lines" ] ; then
+        # Loop through the diff lines, to find the long-version of these lines
+        # That will result in a list of absolute paths to files that need to be optimized
+        tmpdir=$( mktemp -dt "optim" )
+        tmpfilea="$tmpdir/line_diff_a.tmp"
+        tmpfileb="$tmpdir/line_diff_b.tmp"
+        echo "$b" > "$tmpfilea"
+        # Batch out the searches to parallel processes in batches of 8
+        while chunk=$(_batch 8) ; do
+          # For each line in the chunk
+          while read line ; do
+            if [ ! -z "$line" ] ; then
+              LC_ALL=C grep -F -- "$line" "$tmpfilea" >> "$tmpfileb" &
+            fi
+          done <<< "$chunk"
+          wait
+        done <<< "$lines"
+        wait
+        result=$(<"$tmpfileb")
       fi
-    done <<< "$chunk"
-    wait
-  done <<< "$lines"
-  wait
-  _timer_end
-  result=$(<"$tmpfileb")
+    else
+      # PHP is present, use it to make the diff more quickly.
+      # This may be slower for a tiny set of files, but infinately faster for large sets.
+      export a="$a"
+      export b="$b"
+
+      result=$(php << 'EOF'
+<?php
+      # Get the variables from environment.
+      $a = explode("\n", getenv("a"));
+      $b = explode("\n", getenv("b"));
+      # Remove the paths for straight file-to-file comparison.
+      $a_flat = array();
+      foreach ($a as $key => $val) {
+        $a_flat[$key] = basename($val);
+      }
+      $b_flat = array();
+      foreach ($b as $key => $val) {
+        $b_flat[$key] = basename($val);
+      }
+      # Get the keys of all files in $b not in $a.
+      $result = array();
+      $diff_keys = array_keys(array_diff($b_flat, $a_flat));
+      # Convert those keys to the full original lines to return.
+      foreach ($diff_keys as $key) {
+        $result[] = $b[$key];
+      }
+      echo implode("\n", $result);
+?>
+EOF)
+    fi
+    _timer_end
+  fi
 }
 
 # Compare old and new manifests, return new lines only
@@ -461,6 +505,7 @@ _diff_manifest(){
     fi
     todo_image_file_count=$( echo "$diff_image_manifest" | wc -l )
     todo_image_file_count=${todo_image_file_count// /}
+    let todo_image_file_count=todo_image_file_count-1
     printf " found $todo_image_file_count\n"
   fi
   if _bool "$param_video" ; then
@@ -473,6 +518,7 @@ _diff_manifest(){
     fi
     todo_video_file_count=$( echo "$diff_video_manifest" | wc -l )
     todo_video_file_count=${todo_video_file_count// /}
+    let todo_video_file_count=todo_video_file_count-1
     printf " found $todo_video_file_count\n"
   fi
   if _bool "$param_doc" ; then
@@ -485,6 +531,7 @@ _diff_manifest(){
     fi
     todo_doc_file_count=$( echo "$diff_doc_manifest" | wc -l )
     todo_doc_file_count=${todo_doc_file_count// /}
+    let todo_doc_file_count=todo_doc_file_count-1
     printf " found $todo_doc_file_count\n"
   fi
 }
@@ -500,91 +547,92 @@ _optimize_image(){
 
 # Optimize multiple images
 _optimize_image_batch(){
+  if [ ! -z "$1" ] ; then
+    local file_list=""
+    local file_processed_count=0
+    local clean_name=""
 
-  local file_list=""
-  local file_processed_count=0
-  local clean_name=""
+    _start_progress_indicator "image" "Image Processing" "$todo_image_file_count"
 
-  _start_progress_indicator "image" "Image Processing" "$todo_image_file_count"
+    # For each chunk of $file_batch_count lines
+    while chunk=$(_batch $file_batch_count) ; do
 
-  # For each chunk of $file_batch_count lines
-  while chunk=$(_batch $file_batch_count) ; do
-
-    # Form a string of safe file names to send to image-optim
-    file_list=""
-    local file_list_count=0
-    # For each line in the chunk
-    while read line ; do
-      # For each variable in the line
-      while IFS='|' read -ra var ; do
-        local original_file="${var[0]}"
-        # Ensure the file still exists before optimizing
-        if [ -e "$original_file" ] ; then
-          if _bool $param_verbose ; then
-            echo "Optimizing: $original_file"
-          fi
-          file_list="$file_list \"$original_file\""
-          let file_list_count=$file_list_count+1
-        else
-          echo "No longer exists: $original_file"
-        fi
-        # file_list="$file_list \"${var[0]//\"/\\\"}\""
-      done <<< "$line"
-      # We now have a list of $file_batch_count files to optimize
-    done <<< "$chunk"
-
-    # Begin optimization of this batch
-    if [[ $file_list_count > 0 ]] ; then
-      _optimize_image $file_list
-    fi
-
-    # Compare the original file size to the new size to update the manifest
-
-    # For each line in the chunk
-    if [[ $file_list_count > 0 ]] ; then
+      # Form a string of safe file names to send to image-optim
+      file_list=""
+      local file_list_count=0
+      # For each line in the chunk
       while read line ; do
-
-        # Get the original file name and size for comparison
+        # For each variable in the line
         while IFS='|' read -ra var ; do
-          # Escape spaces so that image_optim can take the file names as they are in bulk
           local original_file="${var[0]}"
-          local original_size="${var[1]}"
-          let bytes_processed=$bytes_processed+$original_size;
+          # Ensure the file still exists before optimizing
+          if [ -e "$original_file" ] ; then
+            if _bool $param_verbose ; then
+              echo "Optimizing: $original_file"
+            fi
+            file_list="$file_list \"$original_file\""
+            let file_list_count=$file_list_count+1
+          else
+            echo "No longer exists: $original_file"
+          fi
+          # file_list="$file_list \"${var[0]//\"/\\\"}\""
         done <<< "$line"
-
-        # Was there any change or optimization?
-        if [ -e "$original_file" ] ; then
-          _find_images "$original_file"
-          local new_file="$result"
-          local reduction=0
-          if [[ "$new_file" != "$line" ]] ; then
-            # Yes, the file was optimized, but by how much exactly?
-            while IFS='|' read -ra var ; do
-              # Escape spaces so that image_optim can take the file names as they are in bulk
-              local new_size="${var[1]}"
-            done <<< "$new_file"
-            let reduction=$original_size-$new_size
-            let bytes_optimized=$bytes_optimized+$reduction
-          fi
-
-          # Flatten this single manifest entry (remove absolute path)
-          _flaten_manifest "$new_file"
-          local flat_manifest_entry="$result"
-          _append_manifest "image" "$flat_manifest_entry"
-
-          # Add the amount of reduction to the file at the end also, and save to the reduction manifest as a log of what was done
-          if [[ $reduction > 0 ]] ; then
-            _append_manifest "image_reduction" "$flat_manifest_entry|$reduction"
-          fi
-
-          # Increase count of processed files
-          let file_processed_count=$file_processed_count+$file_batch_count
-
-          _start_progress_indicator "image" "Image Processing" "$todo_image_file_count"
-        fi
+        # We now have a list of $file_batch_count files to optimize
       done <<< "$chunk"
-    fi
-  done <<< "$1"
+
+      # Begin optimization of this batch
+      if [[ $file_list_count > 0 ]] ; then
+        _optimize_image $file_list
+      fi
+
+      # Compare the original file size to the new size to update the manifest
+
+      # For each line in the chunk
+      if [[ $file_list_count > 0 ]] ; then
+        while read line ; do
+
+          # Get the original file name and size for comparison
+          while IFS='|' read -ra var ; do
+            # Escape spaces so that image_optim can take the file names as they are in bulk
+            local original_file="${var[0]}"
+            local original_size="${var[1]}"
+            let bytes_processed=$bytes_processed+$original_size;
+          done <<< "$line"
+
+          # Was there any change or optimization?
+          if [ -e "$original_file" ] ; then
+            _find_images "$original_file"
+            local new_file="$result"
+            local reduction=0
+            if [[ "$new_file" != "$line" ]] ; then
+              # Yes, the file was optimized, but by how much exactly?
+              while IFS='|' read -ra var ; do
+                # Escape spaces so that image_optim can take the file names as they are in bulk
+                local new_size="${var[1]}"
+              done <<< "$new_file"
+              let reduction=$original_size-$new_size
+              let bytes_optimized=$bytes_optimized+$reduction
+            fi
+
+            # Flatten this single manifest entry (remove absolute path)
+            _flaten_manifest "$new_file"
+            local flat_manifest_entry="$result"
+            _append_manifest "image" "$flat_manifest_entry"
+
+            # Add the amount of reduction to the file at the end also, and save to the reduction manifest as a log of what was done
+            if [[ $reduction > 0 ]] ; then
+              _append_manifest "image_reduction" "$flat_manifest_entry|$reduction"
+            fi
+
+            # Increase count of processed files
+            let file_processed_count=$file_processed_count+$file_batch_count
+
+            _start_progress_indicator "image" "Image Processing" "$todo_image_file_count"
+          fi
+        done <<< "$chunk"
+      fi
+    done <<< "$1"
+  fi
 }
 
 # Given a manifest, total the bytes within it of the actual file-size
@@ -654,112 +702,116 @@ _optimize_video(){
 
 # Given a manifest of videos, optimize them all and report progress as each is completed
 _optimize_videos(){
-  local lines="$1"
-
-  _start_progress_indicator "video" "Video Processing" "$todo_video_file_count"
-
-  while read line ; do
-    while IFS='|' read -ra var ; do
-      local source="${var[0]}"
-      local original_size="${var[1]}"
-      # @todo - Support backups... currently overwriting the orginal
-      _optimize_video "$source"
-
-      _find_videos "$source"
-      local new_file="$result"
-      local reduction=0
-      if [[ "$new_file" != "$line" ]] ; then
-        # Yes, the file was optimized, but by how much exactly?
-        while IFS='|' read -ra vr ; do
-          # Escape spaces so that image_optim can take the file names as they are in bulk
-          local new_size="${vr[1]:=0}"
-        done <<< "$new_file"
-        if [[ "$new_size" > 0 ]] ; then
-          let reduction=$original_size-$new_size
-          let bytes_optimized=$bytes_optimized+$reduction
-        fi
-      fi
-
-      # Flatten this single manifest entry (remove absolute path)
-      _flaten_manifest "$new_file"
-      local flat_manifest_entry="$result"
-      _append_manifest "video" "$flat_manifest_entry"
-
-      # Add the amount of reduction to the file at the end also, and save to the reduction manifest as a log of what was done
-      if [[ $reduction > 0 ]] ; then
-        _append_manifest "video_reduction" "$flat_manifest_entry|$reduction"
-      fi
-
-    done <<< "$line"
+  if [ ! -z "$1" ] ; then
+    local lines="$1"
 
     _start_progress_indicator "video" "Video Processing" "$todo_video_file_count"
-  done <<< "$lines"
+
+    while read line ; do
+      while IFS='|' read -ra var ; do
+        local source="${var[0]}"
+        local original_size="${var[1]}"
+        # @todo - Support backups... currently overwriting the orginal
+        _optimize_video "$source"
+
+        _find_videos "$source"
+        local new_file="$result"
+        local reduction=0
+        if [[ "$new_file" != "$line" ]] ; then
+          # Yes, the file was optimized, but by how much exactly?
+          while IFS='|' read -ra vr ; do
+            # Escape spaces so that image_optim can take the file names as they are in bulk
+            local new_size="${vr[1]:=0}"
+          done <<< "$new_file"
+          if [[ "$new_size" > 0 ]] ; then
+            let reduction=$original_size-$new_size
+            let bytes_optimized=$bytes_optimized+$reduction
+          fi
+        fi
+
+        # Flatten this single manifest entry (remove absolute path)
+        _flaten_manifest "$new_file"
+        local flat_manifest_entry="$result"
+        _append_manifest "video" "$flat_manifest_entry"
+
+        # Add the amount of reduction to the file at the end also, and save to the reduction manifest as a log of what was done
+        if [[ $reduction > 0 ]] ; then
+          _append_manifest "video_reduction" "$flat_manifest_entry|$reduction"
+        fi
+
+      done <<< "$line"
+
+      _start_progress_indicator "video" "Video Processing" "$todo_video_file_count"
+    done <<< "$lines"
+  fi
 }
 
 # Optimize a single document file for web
 _optimize_doc(){
-  source="$1"
-  if [ -e "$source" ] ; then
+  if [ ! -z "$1" ] ; then
+    source="$1"
+    if [ -e "$source" ] ; then
 
-    tmpdir=$( mktemp -dt "optim-doc" )
-    tmpdest="$tmpdir/optimized.pdf"
-    if _bool $param_verbose ; then
-      echo "Optimizing: $source"
-      eval "gs                        \
-        -sOutputFile=\"$tmpdest\"     \
-        -sDEVICE=pdfwrite             \
-        -dPDFSETTINGS=/screen         \
-        -dDownsampleColorImages=true  \
-        -dDownsampleGrayImages=true   \
-        -dDownsampleMonoImages=true   \
-        -dColorImageResolution=72     \
-        -dGrayImageResolution=72      \
-        -dMonoImageResolution=72      \
-        -dConvertCMYKImagesToRGB=true \
-        -dDetectDuplicateImages=true  \
-        -dEmbedAllFonts=false         \
-        -dSubsetFonts=true            \
-        -dCompressFonts=true          \
-        -f \"$source\"                "
-        # -c '.setpdfwrite <</AlwaysEmbed [ ]>> setdistillerparams' \
-        # -c '.setpdfwrite <</NeverEmbed [/Courier /Courier-Bold /Courier-Oblique /Courier-BoldOblique /Helvetica /Helvetica-Bold /Helvetica-Oblique /Helvetica-BoldOblique /Times-Roman /Times-Bold /Times-Italic /Times-BoldItalic /Symbol /ZapfDingbats /Arial]>> setdistillerparams'"
-    else
-      eval "gs                        \
-        -sOutputFile=\"$tmpdest\"     \
-        -sDEVICE=pdfwrite             \
-        -dPDFSETTINGS=/screen         \
-        -dDownsampleColorImages=true  \
-        -dDownsampleGrayImages=true   \
-        -dDownsampleMonoImages=true   \
-        -dColorImageResolution=72     \
-        -dGrayImageResolution=72      \
-        -dMonoImageResolution=72      \
-        -dConvertCMYKImagesToRGB=true \
-        -dDetectDuplicateImages=true  \
-        -dEmbedAllFonts=false         \
-        -dSubsetFonts=true            \
-        -dCompressFonts=true          \
-        -f \"$source\"                " >/dev/null
-        # -c '.setpdfwrite <</AlwaysEmbed [ ]>> setdistillerparams' \
-        # -c '.setpdfwrite <</NeverEmbed [/Courier /Courier-Bold /Courier-Oblique /Courier-BoldOblique /Helvetica /Helvetica-Bold /Helvetica-Oblique /Helvetica-BoldOblique /Times-Roman /Times-Bold /Times-Italic /Times-BoldItalic /Symbol /ZapfDingbats /Arial]>> setdistillerparams'" >/dev/null
-    fi
-    if [ -e "$tmpdest" ] ; then
-      # Check to ensure the new file is smaller than the old
-      local oldsize=$( stat -qn -f "%z" -- "$source" )
-      local newsize=$( stat -qn -f "%z" -- "$tmpdest" )
-      let sizediff=$oldsize-$newsize
-      if [ "$sizediff" -lt "0" ] ; then
-        if _bool $param_verbose ; then
-          echo "End result ended up larger than original ($sizediff). Skipping: $source"
+      tmpdir=$( mktemp -dt "optim-doc" )
+      tmpdest="$tmpdir/optimized.pdf"
+      if _bool $param_verbose ; then
+        echo "Optimizing: $source"
+        eval "gs                        \
+          -sOutputFile=\"$tmpdest\"     \
+          -sDEVICE=pdfwrite             \
+          -dPDFSETTINGS=/screen         \
+          -dDownsampleColorImages=true  \
+          -dDownsampleGrayImages=true   \
+          -dDownsampleMonoImages=true   \
+          -dColorImageResolution=72     \
+          -dGrayImageResolution=72      \
+          -dMonoImageResolution=72      \
+          -dConvertCMYKImagesToRGB=true \
+          -dDetectDuplicateImages=true  \
+          -dEmbedAllFonts=false         \
+          -dSubsetFonts=true            \
+          -dCompressFonts=true          \
+          -f \"$source\"                "
+          # -c '.setpdfwrite <</AlwaysEmbed [ ]>> setdistillerparams' \
+          # -c '.setpdfwrite <</NeverEmbed [/Courier /Courier-Bold /Courier-Oblique /Courier-BoldOblique /Helvetica /Helvetica-Bold /Helvetica-Oblique /Helvetica-BoldOblique /Times-Roman /Times-Bold /Times-Italic /Times-BoldItalic /Symbol /ZapfDingbats /Arial]>> setdistillerparams'"
+      else
+        eval "gs                        \
+          -sOutputFile=\"$tmpdest\"     \
+          -sDEVICE=pdfwrite             \
+          -dPDFSETTINGS=/screen         \
+          -dDownsampleColorImages=true  \
+          -dDownsampleGrayImages=true   \
+          -dDownsampleMonoImages=true   \
+          -dColorImageResolution=72     \
+          -dGrayImageResolution=72      \
+          -dMonoImageResolution=72      \
+          -dConvertCMYKImagesToRGB=true \
+          -dDetectDuplicateImages=true  \
+          -dEmbedAllFonts=false         \
+          -dSubsetFonts=true            \
+          -dCompressFonts=true          \
+          -f \"$source\"                " >/dev/null
+          # -c '.setpdfwrite <</AlwaysEmbed [ ]>> setdistillerparams' \
+          # -c '.setpdfwrite <</NeverEmbed [/Courier /Courier-Bold /Courier-Oblique /Courier-BoldOblique /Helvetica /Helvetica-Bold /Helvetica-Oblique /Helvetica-BoldOblique /Times-Roman /Times-Bold /Times-Italic /Times-BoldItalic /Symbol /ZapfDingbats /Arial]>> setdistillerparams'" >/dev/null
+      fi
+      if [ -e "$tmpdest" ] ; then
+        # Check to ensure the new file is smaller than the old
+        local oldsize=$( stat -qn -f "%z" -- "$source" )
+        local newsize=$( stat -qn -f "%z" -- "$tmpdest" )
+        let sizediff=$oldsize-$newsize
+        if [ "$sizediff" -lt "0" ] ; then
+          if _bool $param_verbose ; then
+            echo "End result ended up larger than original ($sizediff). Skipping: $source"
+          fi
+        else
+          if _bool $param_verbose ; then
+            echo "Optimized by $sizediff: $source"
+          fi
+          mv -f "$tmpdest" "$source"
         fi
       else
-        if _bool $param_verbose ; then
-          echo "Optimized by $sizediff: $source"
-        fi
-        mv -f "$tmpdest" "$source"
+        echo "Optimized file missing: $tmpdest"
       fi
-    else
-      echo "Optimized file missing: $tmpdest"
     fi
   fi
 }
@@ -935,7 +987,7 @@ if _bool "$param_dependency_check" ; then
   # Image Optim
   if [ -z "$(which image_optim)" ] ; then
     echo "Image Optim is needed. Installing..."
-    gem install image_optim image_optim_pack
+    sudo gem install image_optim image_optim_pack -n/usr/local/bin
   fi
 
   # svgo
